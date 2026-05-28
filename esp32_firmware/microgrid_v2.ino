@@ -4,25 +4,35 @@
 #include <WebServer.h>
 #include <ArduinoJson.h>   // Install via Library Manager: "ArduinoJson" by Benoit Blanchon
 
-// ==========================================
-// 1. NETWORK & IMAGE CONFIGURATION
-// ==========================================
-const char* ssid     = "SAPTAK2002";        // Replace with your Wi-Fi SSID
-const char* password = "123456789";    // Replace with your Wi-Fi Password
+// ======================================================
+// SMART DC MICROGRID OPERATION SYSTEM
+// ESP32 + LCD + WEB DASHBOARD + SENSOR MONITORING
+// ======================================================
 
-// Paste your direct image link here (ends in .jpg or .png)
-// Keep the backslashes (\") intact around the link URL string
-const String imgSrc  = "https://imgur.com"; 
+// ============================
+// WIFI CONFIGURATION
+// ============================
+const char* ssid     = "SAPTAK2002";
+const char* password = "123456789";
 
-// Initialize Web Server on standard HTTP port 80
+// ============================
+// IMAGE URL FOR WEB DASHBOARD
+// ============================
+const String imgSrc = "https://images.unsplash.com/photo-1509391366360-2e959784a276?q=80&w=1200";
+
+// ============================
+// WEB SERVER
+// ============================
 WebServer server(80);
 
-// Initialize 16x2 LCD (Uses ESP32 default I2C pins: SDA=21, SCL=22)
+// ============================
+// LCD CONFIGURATION
+// ============================
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-// ==========================================
-// 2. PIN DEFINITIONS & GLOBALS
-// ==========================================
+// ============================
+// PIN DEFINITIONS
+// ============================
 #define SOLAR_V 34
 #define WIND_V 35
 #define BATT_V 32
@@ -30,29 +40,46 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 #define LOAD_I 25
 #define RELAY 26
 
-// Global runtime variables accessible by the web server context
-float solarV = 0.0, windV = 0.0, battV = 0.0, solarI = 0.0, loadI = 0.0;
+// ============================
+// GLOBAL VARIABLES
+// ============================
+float solarV = 0.0;
+float windV  = 0.0;
+float battV  = 0.0;
+
+float solarI = 0.0;
+float loadI  = 0.0;
+
+float solarPower = 0.0;
+float loadPower  = 0.0;
+
 String relayStatus = "ON";
 
-// ==========================================
-// 3. CORE SENSOR MATH OPERATIONS
-// ==========================================
-// Reverses external 5:1 physical hardware divider scales
+// ======================================================
+// SENSOR READING FUNCTIONS
+// ======================================================
+
+// Voltage Sensor Function
 float readVoltage(int pin) {
-  float analogVal = analogRead(pin);
-  return (analogVal * 3.3 / 4095.0) * 5.0; 
+  int analogVal = analogRead(pin);
+  float voltage = (analogVal * 3.3 / 4095.0);
+  // Voltage Divider Scaling
+  voltage = voltage * 5.0;
+  return voltage;
 }
 
-// Converts ACS712 voltage steps with 3.3V ADC attenuated midpoints
+// ACS712 Current Sensor Function
 float readCurrent(int pin) {
-  float value = analogRead(pin);
+  int value = analogRead(pin);
   float voltage = value * (3.3 / 4095.0);
-  return (voltage - 1.65) / 0.066; // Sensitivity curve optimized for ACS712-20A
+  // ACS712 20A
+  float current = (voltage - 1.65) / 0.066;
+  return current;
 }
 
-// ==========================================
-// 4. CORS & JSON API FOR REACT DASHBOARD
-// ==========================================
+// ======================================================
+// CORS & JSON API FOR REACT DASHBOARD
+// ======================================================
 void addCorsHeaders() {
   server.sendHeader("Access-Control-Allow-Origin",  "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -80,122 +107,287 @@ void handleOptions() {
   server.send(204);
 }
 
-// ==========================================
-// 5. HTML INTERFACE CODE GENERATOR
-// ==========================================
+// ======================================================
+// WEBPAGE GENERATOR
+// ======================================================
 void handleRoot() {
   addCorsHeaders();
-  // Mobile-responsive styling block
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">";
-  html += "<meta http-equiv=\"refresh\" content=\"2\">"; // Auto-refreshes browser page every 2 seconds
-  html += "<title>DC Microgrid Control Panel</title>";
-  html += "<style>body{font-family:'Segoe UI',Arial,sans-serif;background-color:#121214;color:#e1e1e6;text-align:center;padding:15px;margin:0;}";
-  html += ".container{max-width:480px;margin:10px auto;background:#1a1a1e;padding:20px;border-radius:16px;box-shadow:0 6px 20px rgba(0,0,0,0.4);border:1px solid #2d2d34;}";
-  html += "h1{color:#4caf50;font-size:22px;letter-spacing:1px;margin-bottom:5px;}";
-  html += ".microgrid-pic{width:100%;max-width:440px;height:auto;border-radius:10px;margin:15px 0;box-shadow:0 4px 12px rgba(0,0,0,0.3);border:1px solid #3a3a42;}";
-  html += ".metric-box{display:flex;justify-content:space-between;align-items:center;background:#24242b;padding:14px 20px;margin:10px 0;border-radius:10px;font-size:17px;border-left:4px solid #4caf50;}";
-  html += ".value{font-weight:bold;color:#00e676;font-family:monospace;font-size:19px;}";
-  html += ".relay-on{color:#00e676;font-weight:bold;} .relay-off{color:#ff5252;font-weight:bold;}</style>";
-  html += "</head><body><div class=\"container\">";
-  
-  html += "<h1>⚡ DC MICROGRID DASHBOARD ⚡</h1>";
-  
-  // Renders the online-hosted component image dynamically
-  html += "<img src=\"" + imgSrc + "\" class=\"microgrid-pic\" alt=\"System Status Visual\">";
-  
-  html += "<hr style='border:0;border-top:1px solid #2d2d34;margin:15px 0;'>";
-  
-  // Data Grid Presentation Layers
-  html += "<div class=\"metric-box\"><span>Solar Voltage:</span><span class=\"value\">" + String(solarV, 1) + " V</span></div>";
-  html += "<div class=\"metric-box\"><span>Solar Current:</span><span class=\"value\">" + String(solarI, 1) + " A</span></div>";
-  html += "<div class=\"metric-box\"><span>Wind Voltage:</span><span class=\"value\">" + String(windV, 1) + " V</span></div>";
-  html += "<div class=\"metric-box\"><span>Battery Voltage:</span><span class=\"value\">" + String(battV, 1) + " V</span></div>";
-  html += "<div class=\"metric-box\"><span>Load Current:</span><span class=\"value\">" + String(loadI, 1) + " A</span></div>";
-  
-  String relayClass = (relayStatus == "ON") ? "relay-on" : "relay-off";
-  html += "<div class=\"metric-box\" style='border-left-color:" + String((relayStatus == "ON") ? "#00e676" : "#ff5252") + ";'><span>System Relay Status:</span><span class=\"" + relayClass + "\">" + relayStatus + "</span></div>";
-  
-  html += "<p style='color:#62626e;font-size:12px;margin-top:15px;'>Live telemetry updating automatically. Consume JSON API at <a href=\"/api/data\" style=\"color:#22d3ee\">/api/data</a></p>";
-  html += "</div></body></html>";
-  
+  String html = "";
+
+  html += "<!DOCTYPE html>";
+  html += "<html>";
+  html += "<head>";
+
+  html += "<meta charset='UTF-8'>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+  html += "<meta http-equiv='refresh' content='2'>";
+
+  html += "<title>Smart DC Microgrid</title>";
+
+  // ============================
+  // CSS STYLING
+  // ============================
+  html += "<style>";
+  html += "*{margin:0;padding:0;box-sizing:border-box;}";
+  html += "body{font-family:Segoe UI;background:#0f1117;color:white;padding:15px;}";
+  html += ".container{max-width:1000px;margin:auto;}";
+  html += ".header{background:linear-gradient(135deg,#1e3c72,#2a5298);padding:20px;border-radius:20px;text-align:center;box-shadow:0 4px 15px rgba(0,0,0,0.4);}";
+  html += ".header h1{font-size:32px;}";
+  html += ".header p{margin-top:8px;color:#ddd;}";
+  html += ".banner{width:100%;margin-top:20px;border-radius:15px;}";
+  html += ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;margin-top:25px;}";
+  html += ".card{background:#1a1d29;padding:20px;border-radius:18px;box-shadow:0 5px 15px rgba(0,0,0,0.3);border-left:5px solid #00e676;}";
+  html += ".card h2{font-size:18px;margin-bottom:12px;color:#ccc;}";
+  html += ".value{font-size:32px;font-weight:bold;color:#00e676;}";
+  html += ".status{margin-top:25px;background:#1a1d29;padding:20px;border-radius:18px;}";
+  html += ".status-row{display:flex;justify-content:space-between;padding:12px;background:#242938;border-radius:10px;margin-top:10px;}";
+  html += ".on{color:#00e676;font-weight:bold;}";
+  html += ".off{color:#ff5252;font-weight:bold;}";
+  html += ".footer{text-align:center;margin-top:25px;font-size:13px;color:#888;}";
+  html += "</style>";
+
+  html += "</head>";
+  html += "<body>";
+  html += "<div class='container'>";
+
+  // ============================
+  // HEADER
+  // ============================
+  html += "<div class='header'>";
+  html += "<h1>⚡ SMART DC MICROGRID ⚡</h1>";
+  html += "<p>Renewable Energy Monitoring & Control System</p>";
+  html += "</div>";
+
+  // ============================
+  // IMAGE
+  // ============================
+  html += "<img src='" + imgSrc + "' class='banner'>";
+
+  // ============================
+  // SENSOR CARDS
+  // ============================
+  html += "<div class='grid'>";
+
+  html += "<div class='card'>";
+  html += "<h2>☀ Solar Voltage</h2>";
+  html += "<div class='value'>" + String(solarV,1) + " V</div>";
+  html += "</div>";
+
+  html += "<div class='card'>";
+  html += "<h2>☀ Solar Current</h2>";
+  html += "<div class='value'>" + String(solarI,1) + " A</div>";
+  html += "</div>";
+
+  html += "<div class='card'>";
+  html += "<h2>🌬 Wind Voltage</h2>";
+  html += "<div class='value'>" + String(windV,1) + " V</div>";
+  html += "</div>";
+
+  html += "<div class='card'>";
+  html += "<h2>🔋 Battery Voltage</h2>";
+  html += "<div class='value'>" + String(battV,1) + " V</div>";
+  html += "</div>";
+
+  html += "<div class='card'>";
+  html += "<h2>⚡ Solar Power</h2>";
+  html += "<div class='value'>" + String(solarPower,1) + " W</div>";
+  html += "</div>";
+
+  html += "<div class='card'>";
+  html += "<h2>🏠 Load Power</h2>";
+  html += "<div class='value'>" + String(loadPower,1) + " W</div>";
+  html += "</div>";
+
+  html += "</div>";
+
+  // ============================
+  // STATUS SECTION
+  // ============================
+  html += "<div class='status'>";
+  html += "<h2>System Status</h2>";
+
+  html += "<div class='status-row'>";
+  html += "<span>WiFi Network</span>";
+  html += "<span class='on'>CONNECTED</span>";
+  html += "</div>";
+
+  html += "<div class='status-row'>";
+  html += "<span>Relay Status</span>";
+  if(relayStatus == "ON"){
+    html += "<span class='on'>ON</span>";
+  }
+  else{
+    html += "<span class='off'>OFF</span>";
+  }
+  html += "</div>";
+
+  html += "<div class='status-row'>";
+  html += "<span>ESP32 IP Address</span>";
+  html += "<span>";
+  html += WiFi.localIP().toString();
+  html += "</span>";
+  html += "</div>";
+
+  html += "<div class='status-row'>";
+  html += "<span>JSON API Endpoint</span>";
+  html += "<span><a href='/api/data' style='color:#22d3ee;text-decoration:none;'>/api/data</a></span>";
+  html += "</div>";
+
+  html += "</div>";
+
+  // ============================
+  // FOOTER
+  // ============================
+  html += "<div class='footer'>";
+  html += "ESP32 Smart Microgrid Dashboard";
+  html += "</div>";
+
+  html += "</div>";
+  html += "</body>";
+  html += "</html>";
+
   server.send(200, "text/html", html);
 }
 
-// ==========================================
-// 5. HARDWARE SETUP BOOT ROUTINES
-// ==========================================
+// ======================================================
+// SETUP FUNCTION
+// ======================================================
 void setup() {
   Serial.begin(115200);
-  
-  // Initialize Safety Switch Gear State
-  pinMode(RELAY, OUTPUT);
-  digitalWrite(RELAY, HIGH); // Default path closed to activate load terminal at boot
 
-  // Display initialization sequences on LCD
+  // ============================
+  // RELAY SETUP
+  // ============================
+  pinMode(RELAY, OUTPUT);
+  digitalWrite(RELAY, HIGH);
+
+  // ============================
+  // LCD SETUP
+  // ============================
   lcd.init();
   lcd.backlight();
-  lcd.setCursor(0, 0);
-  lcd.print("BOOT: MICROGRID");
-  lcd.setCursor(0, 1);
-  lcd.print("CONNECTING WIFI");
+  lcd.setCursor(0,0);
+  lcd.print("SMART MICROGRID");
+  lcd.setCursor(0,1);
+  lcd.print("CONNECTING...");
 
-  // Spin up local RF physical transceiver links
+  // ============================
+  // WIFI CONNECTION
+  // ============================
   WiFi.begin(ssid, password);
-  Serial.print("Connecting to Network");
-  while (WiFi.status() != WL_CONNECTED) {
+  Serial.print("Connecting WiFi");
+  while(WiFi.status() != WL_CONNECTED){
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nWiFi Infrastructure Ready.");
+  Serial.println();
+  Serial.println("WiFi Connected");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
 
-  // Map active server context routes with CORS enabling
+  // ============================
+  // WEB SERVER
+  // ============================
   server.on("/",         HTTP_GET,     handleRoot);
   server.on("/api/data", HTTP_GET,     handleApiData);
   server.on("/api/data", HTTP_OPTIONS, handleOptions);
   server.begin();
+  Serial.println("Web Server Started");
 
-  // Print system access URL configuration directly to hardware display
+  // ============================
+  // LCD DISPLAY IP
+  // ============================
   lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("WIFI SYSTEM OK!");
-  lcd.setCursor(0, 1);
-  lcd.print(WiFi.localIP()); // Navigate to this address on any local device browser
-  delay(4000);
+  lcd.setCursor(0,0);
+  lcd.print("WIFI CONNECTED");
+  lcd.setCursor(0,1);
+  lcd.print(WiFi.localIP());
+  delay(3000);
 }
 
-// ==========================================
-// 6. CONTINUOUS MONITORING LOOP
-// ==========================================
+// ======================================================
+// MAIN LOOP
+// ======================================================
 void loop() {
-  // Listen for and serve incoming client dashboard browser payload requests
+  // Handle Web Clients
   server.handleClient();
 
-  // Collect active voltage samples
+  // ============================
+  // SENSOR READINGS
+  // ============================
   solarV = readVoltage(SOLAR_V);
-  windV  = readVoltage(WIND_V);
-  battV  = readVoltage(BATT_V);
-  
-  // Collect active inline series current trends
-  solarI = readCurrent(SOLAR_I); 
-  loadI  = readCurrent(LOAD_I);
+  windV = readVoltage(WIND_V);
+  battV = readVoltage(BATT_V);
+  solarI = readCurrent(SOLAR_I);
+  loadI = readCurrent(LOAD_I);
 
-  // Update localized physical instrumentation matrix
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("S:"); lcd.print(solarV, 1); lcd.print("V W:"); lcd.print(windV, 1); lcd.print("V");
-  lcd.setCursor(0, 1);
-  lcd.print("B:"); lcd.print(battV, 1); lcd.print("V I:"); lcd.print(loadI, 1); lcd.print("A");
+  // ============================
+  // POWER CALCULATIONS
+  // ============================
+  solarPower = solarV * solarI;
+  loadPower = battV * loadI;
 
-  // Hysteresis calculation thresholds protecting lithium/lead core structures
-  if (battV < 11.0) {
-    digitalWrite(RELAY, LOW);   // Drop low side switches immediately
-    relayStatus = "OFF (LOW BATTERY)";
-  } 
-  else if (battV > 12.0) {       
-    digitalWrite(RELAY, HIGH);  // Restore output distribution trunks safely
+  // ============================
+  // BATTERY PROTECTION
+  // ============================
+  if(battV < 11.0){
+    digitalWrite(RELAY, LOW);
+    relayStatus = "OFF";
+  }
+  else if(battV > 12.0){
+    digitalWrite(RELAY, HIGH);
     relayStatus = "ON";
   }
 
-  delay(200); // Quick turnaround interval ensuring sub-second response times for network users
+  // ============================
+  // SERIAL MONITOR OUTPUT
+  // ============================
+  Serial.println("====================================");
+  Serial.print("Solar Voltage  : ");
+  Serial.print(solarV,1);
+  Serial.println(" V");
+  Serial.print("Solar Current  : ");
+  Serial.print(solarI,1);
+  Serial.println(" A");
+  Serial.print("Wind Voltage   : ");
+  Serial.print(windV,1);
+  Serial.println(" V");
+  Serial.print("Battery Voltage: ");
+  Serial.print(battV,1);
+  Serial.println(" V");
+  Serial.print("Load Current   : ");
+  Serial.print(loadI,1);
+  Serial.println(" A");
+  Serial.print("Solar Power    : ");
+  Serial.print(solarPower,1);
+  Serial.println(" W");
+  Serial.print("Load Power     : ");
+  Serial.print(loadPower,1);
+  Serial.println(" W");
+  Serial.print("Relay Status   : ");
+  Serial.println(relayStatus);
+  Serial.print("ESP32 IP       : ");
+  Serial.println(WiFi.localIP());
+  Serial.println("====================================");
+
+  // ============================
+  // LCD DISPLAY
+  // ============================
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("S:");
+  lcd.print(solarV,1);
+  lcd.print(" B:");
+  lcd.print(battV,1);
+
+  lcd.setCursor(0,1);
+  lcd.print("W:");
+  lcd.print(windV,1);
+  lcd.print(" I:");
+  lcd.print(loadI,1);
+
+  // ============================
+  // LOOP DELAY
+  // ============================
+  delay(2000);
 }
