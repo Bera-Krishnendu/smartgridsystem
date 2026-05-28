@@ -27,7 +27,10 @@ export function useGridData(espIp, interval = 2000) {
   const startRef = useRef(Date.now());
 
   const fetchLive = useCallback(async () => {
-    const url = `http://${espIp}/api/data`;
+    let cleanIp = espIp.trim();
+    // Strip http:// or https:// if user entered it
+    cleanIp = cleanIp.replace(/^(https?:\/\/)/i, '');
+    const url = `http://${cleanIp}/api/data`;
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(1800) });
       if (!res.ok) throw new Error('bad response');
