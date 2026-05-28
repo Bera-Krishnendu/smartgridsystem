@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGridData } from './hooks/useGridData';
 import Gauge from './components/Gauge';
+import Login from './components/Login';
 import TrendChart, { COLORS, LABELS } from './components/TrendChart';
 
 // ──────────────────────────────────────────────
@@ -101,11 +102,12 @@ function AlertBanner({ battV, mode }) {
 }
 
 // ──────────────────────────────────────────────
-// Config Panel
+// Config Panel (With Role Restriction)
 // ──────────────────────────────────────────────
-function ConfigPanel({ espIp, onApply }) {
+function ConfigPanel({ espIp, onApply, role }) {
   const [draft, setDraft] = useState(espIp || '');
   const [open, setOpen]   = useState(false);
+  const isViewer = role === 'viewer';
 
   return (
     <div>
@@ -124,15 +126,17 @@ function ConfigPanel({ espIp, onApply }) {
                 id="input-esp-ip"
                 className="form-input"
                 type="text"
-                placeholder="e.g.  192.168.1.104"
+                placeholder={isViewer ? "Connection settings locked" : "e.g.  192.168.1.104"}
                 value={draft}
                 onChange={e => setDraft(e.target.value)}
+                disabled={isViewer}
               />
             </div>
             <button
               id="btn-connect"
               className="btn btn-primary"
               onClick={() => { onApply(draft.trim()); setOpen(false); }}
+              disabled={isViewer || !draft}
             >
               🔗 Connect
             </button>
@@ -140,15 +144,326 @@ function ConfigPanel({ espIp, onApply }) {
               id="btn-demo"
               className="btn btn-outline"
               onClick={() => { onApply(''); setDraft(''); setOpen(false); }}
+              disabled={isViewer}
             >
               📊 Demo Mode
             </button>
           </div>
-          <p className="config-note">
-            ⚡ The ESP32 must expose <strong>GET /api/data</strong> returning JSON with keys: solarV, windV, battV, solarI, loadI, relayStatus.
-            Add CORS header <code>Access-Control-Allow-Origin: *</code> in the ESP32 sketch.
-            On Netlify (public URL) only Demo Mode runs — live data works only on the <strong>same local network</strong> as the ESP32.
-          </p>
+          {isViewer ? (
+            <p className="config-note" style={{ borderLeftColor: '#f87171', background: 'rgba(248,113,113,0.04)' }}>
+              🔒 <strong>Read-Only Access:</strong> You are logged in as a Guest Viewer. Modifying the connection settings or configuring the ESP32 IP is restricted to Operators and Administrators.
+            </p>
+          ) : (
+            <p className="config-note">
+              ⚡ The ESP32 must expose <strong>GET /api/data</strong> returning JSON with keys: solarV, windV, battV, solarI, loadI, relayStatus.
+              Add CORS header <code>Access-Control-Allow-Origin: *</code> in the ESP32 sketch.
+              On Netlify (public URL) only Demo Mode runs — live data works only on the <strong>same local network</strong> as the ESP32.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────
+// Security & Access Control Panel Component
+// ──────────────────────────────────────────────
+function SecurityCenter({ currentUser, addAuditLog }) {
+  const [activeTab, setActiveTab] = useState('logs');
+  const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem('mgrid_users') || '[]'));
+  const [logs, setLogs] = useState(() => JSON.parse(localStorage.getItem('mgrid_audit_logs') || '[]'));
+
+  // User creation states
+  const [newUsername, setNewUsername] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState('operator');
+  const [newSecurityQ, setNewSecurityQ] = useState('pet');
+  const [newSecurityA, setNewSecurityA] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  // Reload logs & users periodically or when modified
+  const refreshData = () => {
+    setUsers(JSON.parse(localStorage.getItem('mgrid_users') || '[]'));
+    setLogs(JSON.parse(localStorage.getItem('mgrid_audit_logs') || '[]'));
+  };
+
+  useEffect(() => {
+    const interval = setInterval(refreshData, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleCreateUser = (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+
+    if (!newUsername.trim() || !newPassword || !newName.trim() || !newSecurityA.trim()) {
+      setError('All fields are required.');
+      return;
+    }
+
+    if (newUsername.trim().length < 3) {
+      setError('Username must be at least 3 characters.');
+      return;
+    }
+
+    const usernameLower = newUsername.trim().toLowerCase();
+    const existingUsers = JSON.parse(localStorage.getItem('mgrid_users') || '[]');
+    if (existingUsers.some(u => u.username.toLowerCase() === usernameLower)) {
+      setError('Username already exists.');
+      return;
+    }
+
+    const newUser = {
+      username: usernameLower,
+      password: newPassword,
+      name: newName.trim(),
+      role: newRole,
+      securityQ: newSecurityQ,
+      securityA: newSecurityA.trim().toLowerCase()
+    };
+
+    const updated = [...existingUsers, newUser];
+    localStorage.setItem('mgrid_users', JSON.stringify(updated));
+    setUsers(updated);
+
+    addAuditLog('info', `New access credentials created for user "${newUser.username}" (${newUser.role}) by admin.`);
+    
+    setSuccess(`Account "${newUser.username}" successfully created!`);
+    setNewUsername('');
+    setNewName('');
+    setNewPassword('');
+    setNewSecurityA('');
+  };
+
+  const handleDeleteUser = (usernameToDelete) => {
+    if (usernameToDelete.toLowerCase() === 'saptak' || usernameToDelete.toLowerCase() === currentUser.username.toLowerCase()) {
+      alert('Security Protection: Cannot delete the primary administrator or your own active session.');
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to permanently revoke credentials for "${usernameToDelete}"?`)) {
+      return;
+    }
+
+    const existingUsers = JSON.parse(localStorage.getItem('mgrid_users') || '[]');
+    const updated = existingUsers.filter(u => u.username.toLowerCase() !== usernameToDelete.toLowerCase());
+    localStorage.setItem('mgrid_users', JSON.stringify(updated));
+    setUsers(updated);
+
+    addAuditLog('warning', `Admin "${currentUser.username}" revoked credentials for user "${usernameToDelete}".`);
+  };
+
+  const handleClearLogs = () => {
+    if (!window.confirm('Wipe security history? This cannot be undone.')) return;
+    const initLog = [{
+      id: Date.now(),
+      type: 'info',
+      message: `Audit log history cleared by Admin "${currentUser.username}".`,
+      timestamp: new Date().toISOString()
+    }];
+    localStorage.setItem('mgrid_audit_logs', JSON.stringify(initLog));
+    setLogs(initLog);
+    addAuditLog('info', 'Audit logs cleared.');
+  };
+
+  const formatLogTime = (timeStr) => {
+    try {
+      const d = new Date(timeStr);
+      return `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+    } catch (e) {
+      return timeStr;
+    }
+  };
+
+  const getLogClass = (type) => {
+    if (type === 'success') return 'success';
+    if (type === 'warning') return 'warning';
+    if (type === 'danger') return 'danger';
+    return 'info';
+  };
+
+  const getLogEmoji = (type) => {
+    if (type === 'success') return '🟢';
+    if (type === 'warning') return '⚠️';
+    if (type === 'danger') return '🚨';
+    return 'ℹ️';
+  };
+
+  const questionLabels = {
+    pet: 'First Pet',
+    city: 'Birth City',
+    color: 'Fav Color',
+    school: 'Elementary School'
+  };
+
+  return (
+    <div className="security-panel">
+      <div className="security-header">
+        <h2 className="security-title">🛡️ Security & Access Control Center</h2>
+        <div className="security-tabs">
+          <button
+            className={`security-tab-btn ${activeTab === 'logs' ? 'active' : ''}`}
+            onClick={() => setActiveTab('logs')}
+          >
+            📋 Audit Logs ({logs.length})
+          </button>
+          <button
+            className={`security-tab-btn ${activeTab === 'users' ? 'active' : ''}`}
+            onClick={() => setActiveTab('users')}
+          >
+            👥 User Registry ({users.length})
+          </button>
+        </div>
+      </div>
+
+      {activeTab === 'logs' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              Showing recent authentication and operational activities.
+            </span>
+            <button className="btn btn-outline" style={{ padding: '4px 10px', fontSize: 11 }} onClick={handleClearLogs}>
+              🧹 Clear History
+            </button>
+          </div>
+          <div className="audit-log-list">
+            {logs.map(log => (
+              <div key={log.id} className={`audit-log-item ${getLogClass(log.type)}`}>
+                <span className="audit-log-icon">{getLogEmoji(log.type)}</span>
+                <div className="audit-log-meta">
+                  <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{log.message}</span>
+                  <span className="audit-log-time">{formatLogTime(log.timestamp)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'users' && (
+        <div>
+          <div className="user-table-wrap" style={{ marginBottom: 16 }}>
+            <table className="user-table">
+              <thead>
+                <tr>
+                  <th>User ID</th>
+                  <th>Full Name</th>
+                  <th>System Access Level</th>
+                  <th>Security Verification</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.username}>
+                    <td style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>{u.username}</td>
+                    <td>{u.name}</td>
+                    <td>
+                      <span className={`role-badge ${u.role}`}>
+                        {u.role === 'admin' ? '👑 ' : u.role === 'operator' ? '⚙️ ' : '👁️ '}
+                        {u.role.toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                      Q: {questionLabels[u.securityQ] || u.securityQ} / A: ***
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn-outline"
+                        style={{
+                          padding: '4px 8px', fontSize: 11, borderColor: '#f8717133', color: '#f87171',
+                          background: 'rgba(248,113,113,0.02)'
+                        }}
+                        onClick={() => handleDeleteUser(u.username)}
+                        disabled={u.username.toLowerCase() === 'saptak' || u.username.toLowerCase() === currentUser.username.toLowerCase()}
+                      >
+                        🗑️ Revoke
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', marginBottom: 12 }}>➕ Add System Operator or Viewer</h3>
+          <form onSubmit={handleCreateUser} className="user-create-form" noValidate>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Full Name</label>
+              <input
+                className="form-input"
+                type="text"
+                placeholder="E.g., John Doe"
+                value={newName}
+                onChange={e => setNewName(e.target.value)}
+              />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">User ID</label>
+              <input
+                className="form-input"
+                type="text"
+                placeholder="E.g., johndoe"
+                value={newUsername}
+                onChange={e => setNewUsername(e.target.value)}
+              />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Temp Password</label>
+              <input
+                className="form-input"
+                type="password"
+                placeholder="Type password"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+              />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Role</label>
+              <select
+                className="login-select"
+                style={{ padding: '8px 12px', height: 40 }}
+                value={newRole}
+                onChange={e => setNewRole(e.target.value)}
+              >
+                <option value="operator">Operator</option>
+                <option value="viewer">Viewer</option>
+              </select>
+            </div>
+            <div className="form-group" style={{ margin: 0, gridColumn: 'span 2' }}>
+              <label className="form-label">Security Question</label>
+              <select
+                className="login-select"
+                style={{ padding: '8px 12px', height: 40 }}
+                value={newSecurityQ}
+                onChange={e => setNewSecurityQ(e.target.value)}
+              >
+                <option value="pet">What was the name of your first pet?</option>
+                <option value="city">In what city were you born?</option>
+                <option value="color">What is your favorite color?</option>
+                <option value="school">What was the name of your elementary school?</option>
+              </select>
+            </div>
+            <div className="form-group" style={{ margin: 0, gridColumn: 'span 2' }}>
+              <label className="form-label">Answer Verification</label>
+              <input
+                className="form-input"
+                type="text"
+                placeholder="Answer text"
+                value={newSecurityA}
+                onChange={e => setNewSecurityA(e.target.value)}
+              />
+            </div>
+            <button className="btn btn-primary" type="submit" style={{ height: 40, padding: '0 16px', gridColumn: 'span 4', width: 'fit-content', marginLeft: 'auto' }}>
+              💾 Create Account
+            </button>
+          </form>
+          {error && <div style={{ color: '#f87171', fontSize: 12, marginTop: 8 }}>⛔ {error}</div>}
+          {success && <div style={{ color: '#4ade80', fontSize: 12, marginTop: 8 }}>✅ {success}</div>}
         </div>
       )}
     </div>
@@ -159,9 +474,109 @@ function ConfigPanel({ espIp, onApply }) {
 // Main App
 // ──────────────────────────────────────────────
 export default function App() {
+  // ── Auth state loaded from session ──
+  const [currentUser, setCurrentUser] = useState(() => {
+    const session = localStorage.getItem('mgrid_current_user');
+    return session ? JSON.parse(session) : null;
+  });
+
   const [espIp, setEspIp] = useState('');
   const [activeChart, setActiveChart] = useState('voltage');
   const { data, history, mode, lastUpdate } = useGridData(espIp, 2000);
+
+  // Inactivity timeout tracking
+  const [lastActivity, setLastActivity] = useState(Date.now());
+  const [showTimeoutWarning, setShowTimeoutWarning] = useState(false);
+  const [timeoutCountdown, setTimeoutCountdown] = useState(30);
+
+  // Audit logging helper
+  const addAuditLog = useCallback((type, message) => {
+    const logs = JSON.parse(localStorage.getItem('mgrid_audit_logs') || '[]');
+    const newLog = {
+      id: Date.now() + Math.random(),
+      type,
+      message,
+      timestamp: new Date().toISOString()
+    };
+    logs.unshift(newLog);
+    localStorage.setItem('mgrid_audit_logs', JSON.stringify(logs.slice(0, 100)));
+  }, []);
+
+  const handleLogin = (username) => {
+    const session = localStorage.getItem('mgrid_current_user');
+    if (session) {
+      setCurrentUser(JSON.parse(session));
+    }
+    setLastActivity(Date.now());
+    setShowTimeoutWarning(false);
+    setTimeoutCountdown(30);
+  };
+
+  const handleLogout = useCallback(() => {
+    if (currentUser) {
+      addAuditLog('info', `User "${currentUser.username}" logged out.`);
+    }
+    localStorage.removeItem('mgrid_current_user');
+    setCurrentUser(null);
+  }, [currentUser, addAuditLog]);
+
+  // Session Timeout Inactivity Effect
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const handleActivity = () => {
+      setLastActivity(Date.now());
+      setShowTimeoutWarning(false);
+      setTimeoutCountdown(30);
+    };
+
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('keydown', handleActivity);
+    window.addEventListener('mousedown', handleActivity);
+    window.addEventListener('scroll', handleActivity);
+    window.addEventListener('click', handleActivity);
+
+    const interval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - lastActivity) / 1000);
+      
+      // 5 minutes total: Warning opens at 4.5 minutes (270s)
+      if (elapsed >= 270) {
+        setShowTimeoutWarning(true);
+        const remaining = Math.max(0, 300 - elapsed);
+        setTimeoutCountdown(remaining);
+
+        if (remaining <= 0) {
+          clearInterval(interval);
+          addAuditLog('danger', `Session expired due to inactivity for user "${currentUser.username}".`);
+          handleLogout();
+        }
+      } else {
+        setShowTimeoutWarning(false);
+      }
+    }, 1000);
+
+    return () => {
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('mousedown', handleActivity);
+      window.removeEventListener('scroll', handleActivity);
+      window.removeEventListener('click', handleActivity);
+      clearInterval(interval);
+    };
+  }, [currentUser, lastActivity, addAuditLog, handleLogout]);
+
+  // Handle ESP32 connection change
+  const handleApplyIp = (ip) => {
+    setEspIp(ip);
+    if (ip) {
+      addAuditLog('info', `ESP32 connection IP changed to "${ip}" by user "${currentUser?.username}".`);
+    } else {
+      addAuditLog('info', `Connection switched to Demo Mode by user "${currentUser?.username}".`);
+    }
+  };
+
+  // Render login wall if not authenticated
+  if (!currentUser) return <Login onLogin={handleLogin} />;
 
   const { solarV, windV, battV, solarI, loadI, relayStatus } = data;
   const battPct  = batteryPercent(battV);
@@ -175,6 +590,30 @@ export default function App() {
     <>
       <div className="bg-grid" />
       <div className="bg-radial" />
+
+      {/* Inactivity Warning Modal */}
+      {showTimeoutWarning && (
+        <div className="timeout-overlay">
+          <div className="timeout-modal">
+            <div className="timeout-icon">⏰</div>
+            <h2 className="timeout-title">Inactivity Warning</h2>
+            <p className="timeout-desc">
+              You have been inactive for a while. To protect control operations, your session will automatically lock soon.
+            </p>
+            <span className="timeout-timer">
+              00:{timeoutCountdown < 10 ? `0${timeoutCountdown}` : timeoutCountdown}
+            </span>
+            <div className="timeout-actions">
+              <button className="btn btn-primary" onClick={() => setLastActivity(Date.now())}>
+                Extend Session
+              </button>
+              <button className="btn btn-outline" onClick={handleLogout}>
+                Log Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="app-layout">
         {/* ── Navbar ── */}
@@ -191,12 +630,33 @@ export default function App() {
               {lastUpdate ? <>Last update<br />{lastUpdate.toLocaleTimeString()}</> : 'Initializing…'}
             </div>
             <StatusBadge mode={mode} />
+            {/* User badge */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '6px 14px', borderRadius: 20,
+              background: 'rgba(34,211,238,0.08)',
+              border: '1px solid rgba(34,211,238,0.2)',
+              fontSize: 12, fontWeight: 600, color: 'var(--accent)',
+            }}>
+              <span>👤</span> {currentUser.name.toUpperCase()} 
+              <span className={`role-badge ${currentUser.role}`} style={{ marginLeft: 4, transform: 'scale(0.95)', padding: '2px 6px' }}>
+                {currentUser.role.toUpperCase()}
+              </span>
+            </div>
+            <button
+              id="btn-logout"
+              className="btn btn-outline"
+              onClick={handleLogout}
+              style={{ padding: '6px 14px', fontSize: 12 }}
+            >
+              🔓 Logout
+            </button>
           </div>
         </nav>
 
         {/* ── Main ── */}
         <main className="main-content">
-          <ConfigPanel espIp={espIp} onApply={setEspIp} />
+          <ConfigPanel espIp={espIp} onApply={handleApplyIp} role={currentUser.role} />
           <AlertBanner battV={battV} mode={mode} />
 
           {/* Hero KPI Cards */}
@@ -232,6 +692,11 @@ export default function App() {
           <div style={{ marginBottom: 20 }}>
             <RelayCard status={relayStatus} />
           </div>
+
+          {/* Security & Access Center (For Administrators Only) */}
+          {currentUser.role === 'admin' && (
+            <SecurityCenter currentUser={currentUser} addAuditLog={addAuditLog} />
+          )}
 
           {/* Gauges + Trend */}
           <div className="grid-2" style={{ marginBottom: 20 }}>
