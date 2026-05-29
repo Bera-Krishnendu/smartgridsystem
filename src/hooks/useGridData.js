@@ -2,6 +2,12 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const HISTORY_LIMIT = 30;
 
+// Zero/idle data — shown by default when no ESP32 connected and demo is off
+const IDLE_DATA = {
+  solarV: 0, windV: 0, battV: 0, solarI: 0, loadI: 0,
+  relayStatus: 'OFF', ts: Date.now()
+};
+
 // Realistic simulation curves for demo mode
 function simValue(base, amplitude, phase, t) {
   return +(base + amplitude * Math.sin((t / 8000) * 2 * Math.PI + phase) + (Math.random() - 0.5) * amplitude * 0.15).toFixed(2);
@@ -18,10 +24,12 @@ function generateDemo(t) {
   return { solarV, windV, battV, solarI, loadI, relayStatus, ts: Date.now() };
 }
 
-export function useGridData(espIp, interval = 2000) {
-  const [data, setData]       = useState(() => generateDemo(Date.now()));
+// espIp: string (ESP32 IP address or empty)
+// demoActive: boolean (true = show demo data, false = show zeros when no ESP32)
+export function useGridData(espIp, demoActive = false, interval = 3000) {
+  const [data, setData]       = useState(IDLE_DATA);
   const [history, setHistory] = useState([]);
-  const [mode, setMode]       = useState('demo');   // 'live' | 'demo' | 'error'
+  const [mode, setMode]       = useState('idle');   // 'live' | 'demo' | 'error' | 'idle'
   const [lastUpdate, setLastUpdate] = useState(null);
   const timerRef = useRef(null);
   const startRef = useRef(Date.now());
@@ -48,24 +56,31 @@ export function useGridData(espIp, interval = 2000) {
 
   const tick = useCallback(() => {
     const elapsed = Date.now() - startRef.current;
+
     if (espIp) {
+      // ESP32 IP is set — try to fetch live data
       fetchLive().then(ok => {
         if (!ok) {
-          const point = generateDemo(elapsed);
-          setData(point);
-          setHistory(h => [...h.slice(-HISTORY_LIMIT + 1), point]);
+          // Failed to reach ESP32
           setMode('error');
           setLastUpdate(new Date());
         }
       });
-    } else {
+    } else if (demoActive) {
+      // No ESP32, but demo mode is ON — show simulated data
       const point = generateDemo(elapsed);
       setData(point);
       setHistory(h => [...h.slice(-HISTORY_LIMIT + 1), point]);
       setMode('demo');
       setLastUpdate(new Date());
+    } else {
+      // No ESP32, demo OFF — show all zeros
+      setData({ ...IDLE_DATA, ts: Date.now() });
+      setHistory([]);
+      setMode('idle');
+      setLastUpdate(null);
     }
-  }, [espIp, fetchLive]);
+  }, [espIp, demoActive, fetchLive]);
 
   useEffect(() => {
     tick();

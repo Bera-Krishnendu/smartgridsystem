@@ -66,8 +66,9 @@ function StatusBadge({ mode }) {
     live:  { cls: 'live',  label: 'LIVE DATA' },
     demo:  { cls: 'demo',  label: 'DEMO MODE' },
     error: { cls: 'error', label: 'ESP32 OFFLINE' },
+    idle:  { cls: 'idle',  label: 'STANDBY' },
   };
-  const { cls, label } = map[mode] || map.demo;
+  const { cls, label } = map[mode] || map.idle;
   return (
     <div className={`status-badge ${cls}`}>
       <div className="status-dot" />
@@ -104,16 +105,28 @@ function AlertBanner({ battV, mode }) {
 // ──────────────────────────────────────────────
 // Config Panel (With Role Restriction)
 // ──────────────────────────────────────────────
-function ConfigPanel({ espIp, onApply, role }) {
+function ConfigPanel({ espIp, onApply, onDemoToggle, demoActive, role }) {
   const [draft, setDraft] = useState(espIp || '');
   const [open, setOpen]   = useState(false);
   const isViewer = role === 'viewer';
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12, gap: 8 }}>
         <button className="btn btn-outline" onClick={() => setOpen(o => !o)} id="btn-config">
           ⚙️ {open ? 'Hide' : 'Configure'} ESP32 Connection
+        </button>
+        <button
+          id="btn-demo-toggle"
+          className="btn btn-outline"
+          style={demoActive ? {
+            borderColor: '#fbbf24', color: '#fbbf24',
+            background: 'rgba(251,191,36,0.1)'
+          } : {}}
+          onClick={onDemoToggle}
+          disabled={isViewer || !!espIp}
+        >
+          📊 {demoActive ? 'Stop Demo' : 'Start Demo'}
         </button>
       </div>
       {open && (
@@ -138,16 +151,19 @@ function ConfigPanel({ espIp, onApply, role }) {
               onClick={() => { onApply(draft.trim()); setOpen(false); }}
               disabled={isViewer || !draft}
             >
-              🔗 Connect
+              🔗 Connect Live
             </button>
-            <button
-              id="btn-demo"
-              className="btn btn-outline"
-              onClick={() => { onApply(''); setDraft(''); setOpen(false); }}
-              disabled={isViewer}
-            >
-              📊 Demo Mode
-            </button>
+            {espIp && (
+              <button
+                id="btn-disconnect"
+                className="btn btn-outline"
+                style={{ borderColor: '#f8717144', color: '#f87171' }}
+                onClick={() => { onApply(''); setDraft(''); setOpen(false); }}
+                disabled={isViewer}
+              >
+                ⛔ Disconnect
+              </button>
+            )}
           </div>
           {isViewer ? (
             <p className="config-note" style={{ borderLeftColor: '#f87171', background: 'rgba(248,113,113,0.04)' }}>
@@ -481,8 +497,9 @@ export default function App() {
   });
 
   const [espIp, setEspIp] = useState('');
+  const [demoActive, setDemoActive] = useState(false);
   const [activeChart, setActiveChart] = useState('voltage');
-  const { data, history, mode, lastUpdate } = useGridData(espIp, 3000);
+  const { data, history, mode, lastUpdate } = useGridData(espIp, demoActive, 3000);
 
   // Inactivity timeout tracking
   const [lastActivity, setLastActivity] = useState(Date.now());
@@ -569,10 +586,18 @@ export default function App() {
   const handleApplyIp = (ip) => {
     setEspIp(ip);
     if (ip) {
+      setDemoActive(false); // Disable demo when connecting to live ESP32
       addAuditLog('info', `ESP32 connection IP changed to "${ip}" by user "${currentUser?.username}".`);
     } else {
-      addAuditLog('info', `Connection switched to Demo Mode by user "${currentUser?.username}".`);
+      addAuditLog('info', `ESP32 disconnected by user "${currentUser?.username}".`);
     }
+  };
+
+  // Toggle demo mode
+  const handleDemoToggle = () => {
+    const newState = !demoActive;
+    setDemoActive(newState);
+    addAuditLog('info', `Demo mode ${newState ? 'activated' : 'deactivated'} by user "${currentUser?.username}".`);
   };
 
   // Render login wall if not authenticated
@@ -656,7 +681,7 @@ export default function App() {
 
         {/* ── Main ── */}
         <main className="main-content">
-          <ConfigPanel espIp={espIp} onApply={handleApplyIp} role={currentUser.role} />
+          <ConfigPanel espIp={espIp} onApply={handleApplyIp} onDemoToggle={handleDemoToggle} demoActive={demoActive} role={currentUser.role} />
           <AlertBanner battV={battV} mode={mode} />
 
           {/* Hero KPI Cards */}
@@ -849,7 +874,7 @@ export default function App() {
             <span className="footer-brand">⚡ DC Microgrid</span>
             {' '}— ESP32 IoT Dashboard
           </div>
-          <div>Built with React + Recharts · Deploy on <strong style={{ color: 'var(--accent)' }}>Netlify</strong>By Krishnendu Bera</div>
+          <div>Built with React + Recharts · Deploy on <strong style={{ color: 'var(--accent)' }}>Netlify</strong>· By Krishnendu Bera</div>
           <div>© 2026 Smart Grid System</div>
         </footer>
       </div>

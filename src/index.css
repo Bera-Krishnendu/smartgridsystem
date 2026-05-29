@@ -173,6 +173,11 @@ body {
   border-color: rgba(248, 113, 113, 0.3);
   color: #f87171;
 }
+.status-badge.idle {
+  background: rgba(139, 159, 192, 0.1);
+  border-color: rgba(139, 159, 192, 0.3);
+  color: #8b9fc0;
+}
 
 .status-dot {
   width: 7px; height: 7px; border-radius: 50%;
