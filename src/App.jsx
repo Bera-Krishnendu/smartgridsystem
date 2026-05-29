@@ -849,7 +849,7 @@ export default function App() {
             <span className="footer-brand">⚡ DC Microgrid</span>
             {' '}— ESP32 IoT Dashboard
           </div>
-          <div>Built with React + Recharts · Deploy on <strong style={{ color: 'var(--accent)' }}>Netlify</strong></div>
+          <div>Built with React + Recharts · Deploy on <strong style={{ color: 'var(--accent)' }}>Netlify</strong>By Krishnendu Bera</div>
           <div>© 2026 Smart Grid System</div>
         </footer>
       </div>
