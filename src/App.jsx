@@ -482,7 +482,7 @@ export default function App() {
 
   const [espIp, setEspIp] = useState('');
   const [activeChart, setActiveChart] = useState('voltage');
-  const { data, history, mode, lastUpdate } = useGridData(espIp, 2000);
+  const { data, history, mode, lastUpdate } = useGridData(espIp, 3000);
 
   // Inactivity timeout tracking
   const [lastActivity, setLastActivity] = useState(Date.now());

@@ -32,7 +32,7 @@ export function useGridData(espIp, interval = 2000) {
     cleanIp = cleanIp.replace(/^(https?:\/\/)/i, '');
     const url = `http://${cleanIp}/api/data`;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(1800) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
       if (!res.ok) throw new Error('bad response');
       const json = await res.json();
       const point = { ...json, ts: Date.now() };
